@@ -7,24 +7,20 @@
 #include <cassert>
 #include <map>
 #include <conio.h>
+#include <array>
 
 constexpr int WORD_LENGTH = 5;
-class LetterCounts;
+constexpr int MAX_GUESS_COUNT = 6;
 
-struct Word
+struct Word : public std::array<char, WORD_LENGTH>
 {
   Word() = default;
-  Word(const std::string& input) { assert(input.size() == WORD_LENGTH); for (int i = 0; i < WORD_LENGTH; ++i) data[i] = input[i]; }
-  Word(const char* input) { assert(strlen(input) == WORD_LENGTH); for (int i = 0; i < WORD_LENGTH; ++i) data[i] = input[i]; }
-  constexpr char operator[](int i) const { return data[i]; }
-  constexpr char& operator[](int i) { return data[i]; }
-  constexpr bool operator==(const Word& other) const { for (int i = 0; i < WORD_LENGTH; ++i) if (this->data[i] != other.data[i]) return false; return true; }
-  bool contains(char ch) const { for (int i = 0; i < WORD_LENGTH; ++i) if (data[i] == ch) return true; return false; }
-  int count(char ch) const { int result = 0; for (int i = 0; i < WORD_LENGTH; ++i) if (data[i] == ch) ++result; return result; }
-  int first(char ch) const { for (int i = 0; i < WORD_LENGTH; ++i) if (data[i] == ch) return i; return int(-1); }
-  size_t wordValue(const LetterCounts& letterCounts) const;
-  std::string str() const { std::string result; for (int i = 0; i < WORD_LENGTH; ++i) result += this->data[i]; return result; }
-  char data[WORD_LENGTH];
+  Word(const std::string& input) : Word(input.c_str()) {}
+  Word(const char* input) { assert(strlen(input) == WORD_LENGTH); for (int i = 0; i < WORD_LENGTH; ++i) (*this)[i] = input[i]; }
+  constexpr bool operator==(const Word& other) const { for (int i = 0; i < WORD_LENGTH; ++i) if ((*this)[i] != other[i]) return false; return true; }
+  bool contains(char ch) const { for (int i = 0; i < WORD_LENGTH; ++i) if ((*this)[i] == ch) return true; return false; }
+  int count(char ch) const { int result = 0; for (int i = 0; i < WORD_LENGTH; ++i) if ((*this)[i] == ch) ++result; return result; }
+  std::string str() const { std::string result; for (int i = 0; i < WORD_LENGTH; ++i) result += (*this)[i]; return result; }
 };
 
 struct InputLine
@@ -121,33 +117,6 @@ InputLine generateGuess(const Word& word, const Word& goalWord)
   return InputLine(word, result);
 }
 
-class Dictionary;
-
-class LetterCounts
-{
-public:
-  LetterCounts(const Dictionary& dictionary);
-  size_t operator[](char ch) const { return this->data[ch - 'a']; }
-  size_t& operator[](char ch) { return this->data[ch - 'a']; }
-private:
-  std::vector<size_t> data;
-};
-
-size_t Word::wordValue(const LetterCounts& letterCounts) const
-{
-  size_t result = 0;
-  for (size_t i = 0; i < WORD_LENGTH; ++i)
-  {
-    bool countedAlready = false;
-    for (size_t j = 0; j < i; ++j)
-      if (this->data[i] == this->data[j])
-        countedAlready = true;
-    if (!countedAlready)
-      result += letterCounts[this->data[i]];
-  }
-  return result;
-}
-
 class Dictionary : public std::vector<Word>
 {
 public:
@@ -160,12 +129,8 @@ public:
     std::string word;
     while(std::getline(file, word))
       if (word.size() == 5)
-        this->insert(word);
+        this->emplace_back(word);
     file.close();
-  }
-  void insert(const Word& word)
-  {
-    this->push_back(word);
   }
   void remove(const Word& word)
   {
@@ -175,18 +140,6 @@ public:
         this->erase(this->begin() + i);
         return;
       }
-  }
-  void sortByWordValue()
-  {
-    LetterCounts letterCounts(*this);
-    std::sort(this->begin(), this->end(), [&letterCounts](const Word& a, const Word& b) { return a.wordValue(letterCounts) > b.wordValue(letterCounts); });
-  }
-
-  void printWordValues() const
-  {
-    LetterCounts letterCounts(*this);
-    for (const Word& word : *this)
-      printf("%s: %u\n", word.str().c_str(), word.wordValue(letterCounts));
   }
   void printMatching(const Input& input) const
   {
@@ -208,17 +161,6 @@ public:
     return result;
   }
 };
-
-LetterCounts::LetterCounts(const Dictionary& dictionary)
-{
-  this->data.resize('z' - 'a' + 1);
-  for (const Word& word : dictionary)
-    for (int i = 0; i < WORD_LENGTH; ++i)
-    {
-      assert(word[i] >= 'a' && word[i] <= 'z');
-      ++(*this)[word[i]];
-    }
-}
 
 class Strategy
 {
@@ -245,26 +187,6 @@ public:
   const Word firstWord;
 };
 
-class LetterCountStrategy : public Strategy
-{
-public:
-  LetterCountStrategy(const Dictionary& dictionary)
-    : sortedDictionary(dictionary)
-  {
-    sortedDictionary.sortByWordValue();
-  }
-  virtual Word next(const Input& input, Dictionary& dictionary) const override
-  {
-    for (const Word& word : this->sortedDictionary)
-      if (input.matches(word))
-        return word;
-    return Word();
-  }
-  virtual std::string name() const override { return "Letter count strategy"; };
-
-  Dictionary sortedDictionary;
-};
-
 // the success rate is 99.9723%, which means there is just one word from the dictionary (I don't know which one, it failed on)
 class BestRemoverStrategy : public SimpleStrategy
 {
@@ -278,18 +200,19 @@ public:
     if (input.data.empty())
       return this->firstWord;
 
-    std::vector<size_t> matchingWords;
+    std::vector<size_t> matchingIndexes;
     for (size_t i = 0; i < dictionary.size(); ++i)
       if (input.matches(dictionary[i]))
-        matchingWords.push_back(i);
-    if (matchingWords.empty())
+        matchingIndexes.push_back(i);
+    if (matchingIndexes.empty())
       return Word();
-    if (matchingWords.size() == 1 || matchingWords.size() > 100 || input.data.size() >= 5)
-      return dictionary[matchingWords[0]];
+    if (matchingIndexes.size() == 1 || input.data.size() >= 5)
+      return dictionary[matchingIndexes[0]];
 
+    // the score represents the sum of
     std::vector<size_t> scores;
     scores.resize(dictionary.size());
-    for (size_t goalWord : matchingWords)
+    for (size_t goalWord : matchingIndexes)
     {
       for (size_t candidateIndex = 0; candidateIndex < dictionary.size(); ++candidateIndex)
       {
@@ -297,7 +220,7 @@ public:
         Input inputCopy(input);
         inputCopy.data.emplace_back(generateGuess(candidate, dictionary[goalWord]));
         size_t matchesLeft = 0;
-        for (size_t test : matchingWords)
+        for (size_t test : matchingIndexes)
           if (inputCopy.matches(dictionary[test]))
             ++matchesLeft;
         if (matchesLeft == 0)
@@ -314,7 +237,7 @@ public:
         bestScore = scores[i];
         best = i;
       }
-    for (size_t matchingWord : matchingWords)
+    for (size_t matchingWord : matchingIndexes)
       if (scores[matchingWord] == bestScore)
         return dictionary[matchingWord];
     return dictionary[best];
@@ -328,7 +251,7 @@ size_t testStrategy(Dictionary& dictionary, const Strategy& strategy)
   for (const Word& goalWord : dictionary)
   {
     Input input;
-    for (uint32_t i = 0; i < 6; ++i)
+    for (uint32_t i = 0; i < MAX_GUESS_COUNT; ++i)
     {
       Word next = strategy.next(input, dictionary);
       if (next == goalWord)
@@ -399,8 +322,6 @@ void compareStrategies()
   results.emplace_back(dictionary, new SimpleStrategy("raped"));
   results.emplace_back(dictionary, new SimpleStrategy("taper"));
 
-  results.emplace_back(dictionary, new LetterCountStrategy(dictionary));
-
   std::sort(results.begin(), results.end());
   printf("------ Results\n");
   for (StrategyResult& result : results)
@@ -415,28 +336,28 @@ void check(Word goal, Word guess, Word result)
   assert(input.matches(goal));
 }
 
-int main()
+void test()
 {
-
-  assert(generateGuess("hello", "proxy").result == "xxxxy");
-  assert(generateGuess("house", "proxy").result == "xyxxx");
-  assert(generateGuess("shoot", "proxy").result == "xxgxx");
-  assert(generateGuess("brown", "proxy").result == "xggxx");
-  assert(generateGuess("aroma", "proxy").result == "xggxx");
-  assert(generateGuess("proxy", "proxy").result == "ggggg");
-  assert(generateGuess("actor", "array").result == "gxxxy");
-  assert(generateGuess("array", "actor").result == "gyxxx");
+  check("proxy", "hello", "xxxxy");
+  check("proxy", "house", "xyxxx");
+  check("proxy", "shoot", "xxgxx");
+  check("proxy", "brown", "xggxx");
+  check("proxy", "aroma", "xggxx");
+  check("proxy", "proxy", "ggggg");
+  check("array", "actor", "gxxxy");
+  check("actor", "array", "gyxxx");
   check("aorta", "aaron", "gygyx");
   check("aorta", "outdo", "yxyxx");
   check("actor", "array", "gyxxx");
   check("appro", "pappy", "yygxx");
+}
 
-
+int main()
+{
+  test();
   //compareStrategies();
-
   printf("x = Nothing, y = yellow, g = green, n = discard the provided word\n");
   while (true)
     interactive(BestRemoverStrategy("tares", Dictionary()));
-  _getch();
   return 0;
 }
